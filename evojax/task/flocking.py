@@ -47,6 +47,7 @@ class State(TaskState):
     state: jnp.ndarray
     steps: jnp.int32
     key: jnp.ndarray
+    energys: jnp.ndarray
 
 
 def sample_position(key: jnp.ndarray, n: jnp.ndarray) -> jnp.ndarray:
@@ -153,8 +154,11 @@ def calc_energy(position, theta):
     fov = vmap(vmap(fov, (0, None)))
     mask = fov(dR, N)
 
-    return 0.5 * jnp.sum(E_align(dR, N, N) + E_avoid(dR)) + jnp.sum(
-        E_cohesion(dR, N, mask))
+    e1 = jnp.sum(E_align(dR, N, N))
+    e2 = jnp.sum(E_avoid(dR))
+    e3 = jnp.sum(E_cohesion(dR, N, mask))
+
+    return 0.5 * (e1 + e2) + jnp.sum(e3), jnp.array([e1, e2, e3])
 
 
 def update_state(state, action):
@@ -168,9 +172,9 @@ def update_state(state, action):
 
 def get_reward(state: State, max_steps: jnp.int32):
     position, theta = unpack_obs(state.state)
-    reward = -calc_energy(position, theta)
+    reward, energys = calc_energy(position, theta)
     gamma = state.steps / max_steps
-    return reward * gamma ** 2
+    return - reward * gamma ** 2, energys
 
 
 def to_pillow_coordinate(position, width, height):
@@ -241,7 +245,8 @@ class FlockingTask(VectorizedTask):
             return State(obs=choose_neighbor(state),
                          state=state,
                          steps=jnp.zeros((), dtype=jnp.int32),
-                         key=next_key)
+                         key=next_key,
+                         energys=jnp.zeros(shape=(3)))
         self._reset_fn = jax.jit(jax.vmap(reset_fn))
 
         def step_fn(state, action):
@@ -249,12 +254,13 @@ class FlockingTask(VectorizedTask):
             new_obs = choose_neighbor(new_state)
             new_steps = jnp.int32(state.steps + 1)
             next_key, _ = jax.random.split(state.key)
-            reward = get_reward(state, max_steps)
+            reward, new_energys = get_reward(state, max_steps)
             done = jnp.where(max_steps <= new_steps, True, False)
             return State(obs=new_obs,
                          state=new_state,
                          steps=new_steps,
-                         key=next_key), reward, done
+                         key=next_key,
+                         energys=new_energys), reward, done
         self._step_fn = jax.jit(jax.vmap(step_fn))
 
     def step(self, state: State,
@@ -267,3 +273,4 @@ class FlockingTask(VectorizedTask):
     @staticmethod
     def render(state: State, task_id: int) -> Image:
         return render_single(state.state[task_id])
+

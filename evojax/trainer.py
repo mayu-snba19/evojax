@@ -77,6 +77,7 @@ class Trainer(object):
         self._max_iter = max_iter
         self.model_dir = model_dir
         self._log_dir = log_dir
+        self._train_task = train_task
 
         self._obs_normalizer = ObsNormalizer(
             obs_shape=train_task.obs_shape,
@@ -147,6 +148,7 @@ class Trainer(object):
 
                 if i > 0 and i % self._log_interval == 0:
                     scores = np.array(scores)
+                    self._logger.info(self._train_task)
                     self._logger.info(
                         'Iter={0}, size={1}, max={2:.4f}, '
                         'avg={3:.4f}, min={4:.4f}, std={5:.4f}'.format(

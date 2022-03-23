@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from encodings import utf_8
 import logging
 from functools import partial
 from typing import Tuple
@@ -28,6 +29,7 @@ from evojax.task.base import VectorizedTask
 from evojax.policy.base import PolicyState
 from evojax.policy.base import PolicyNetwork
 from evojax.util import create_logger
+import pickle
 
 
 @partial(jax.jit, static_argnums=(1, 2, 3, 4, 5))
@@ -116,6 +118,7 @@ class SimManager(object):
         self._pop_size = pop_size
         self._n_evaluations = max(n_evaluations, jax.local_device_count())
         self._ma_training = train_vec_task.multi_agent_training
+        self._step = 0
 
         self.obs_normalizer = obs_normalizer
         if self.obs_normalizer is None:
@@ -175,6 +178,22 @@ class SimManager(object):
                 step_once_fn,
                 (task_states, policy_states, params, obs_params,
                  accumulated_rewards, valid_masks), (), max_steps)
+            
+            if self._step % 10 == 0:
+                energy = jnp.mean(task_states.energys, axis=0)
+                energy = energy[None, :]
+                with open('energy.pkl', 'rb') as f:
+                    try:
+                        energy_list = pickle.load(f)
+                    except EOFError:
+                        with open('energy.pkl', mode="wb") as f:
+                            pickle.dump(energy, f)
+                    else:
+                        with open('energy.pkl', mode="wb") as f:
+                            energy_list = jnp.concatenate([energy_list, energy])
+                            pickle.dump(energy_list, f)               
+            self._step += 1
+        
             return accumulated_rewards, obs_set, obs_mask
 
         self._policy_reset_fn = jax.jit(policy_net.reset)
@@ -253,6 +272,7 @@ class SimManager(object):
         # Do the rollouts.
         scores, all_obs, masks = rollout_func(
             task_state, policy_state, params, self.obs_params)
+        
         if self._num_device > 1:
             all_obs = reshape_data_from_pmap(all_obs)
             masks = reshape_data_from_pmap(masks)
